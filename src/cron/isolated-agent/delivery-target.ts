@@ -76,14 +76,30 @@ export async function resolveDeliveryTarget(
     if (preliminary.lastChannel) {
       fallbackChannel = preliminary.lastChannel;
     } else {
-      try {
-        const selection = await resolveMessageChannelSelection({ cfg });
-        fallbackChannel = selection.channel;
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        channelResolutionError = new Error(
-          `${detail} Set delivery.channel explicitly or use a main session with a previous channel.`,
-        );
+      // Try to infer the delivery channel from agent-specific bindings before
+      // falling back to global channel selection. This allows isolated cron
+      // sessions (which have no prior lastChannel) to deliver correctly when
+      // the agent is exclusively bound to a single messaging channel.
+      const bindings = buildChannelAccountBindings(cfg);
+      const agentNormalized = normalizeAgentId(agentId);
+      const boundChannels: string[] = [];
+      for (const [channel, byAgent] of bindings) {
+        if (byAgent.has(agentNormalized)) {
+          boundChannels.push(channel);
+        }
+      }
+      if (boundChannels.length === 1) {
+        fallbackChannel = boundChannels[0] as Exclude<OutboundChannel, "none">;
+      } else {
+        try {
+          const selection = await resolveMessageChannelSelection({ cfg });
+          fallbackChannel = selection.channel;
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          channelResolutionError = new Error(
+            `${detail} Set delivery.channel explicitly or use a main session with a previous channel.`,
+          );
+        }
       }
     }
   }

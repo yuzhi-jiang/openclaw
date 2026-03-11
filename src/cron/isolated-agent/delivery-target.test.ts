@@ -359,4 +359,77 @@ describe("resolveDeliveryTarget", () => {
     expect(result.ok).toBe(true);
     expect(result.accountId).toBe("explicit");
   });
+
+  it("resolves channel from binding when channel=last and agent has a single binding", async () => {
+    setMainSessionEntry(undefined);
+    vi.mocked(resolveMessageChannelSelection).mockClear();
+
+    const cfg = makeCfg({
+      bindings: [{ agentId: AGENT_ID, match: { channel: "telegram", accountId: "bot-tg" } }],
+    });
+
+    const result = await resolveDeliveryTarget(cfg, AGENT_ID, {
+      channel: "last",
+      to: "987654",
+    });
+
+    // Channel should be resolved from the binding, not from resolveMessageChannelSelection.
+    expect(resolveMessageChannelSelection).not.toHaveBeenCalled();
+    expect(result.channel).toBe("telegram");
+    expect(result.ok).toBe(true);
+    expect(result.accountId).toBe("bot-tg");
+  });
+
+  it("falls through to resolveMessageChannelSelection when agent has multiple bindings", async () => {
+    setMainSessionEntry(undefined);
+    vi.mocked(resolveMessageChannelSelection).mockClear();
+    vi.mocked(resolveMessageChannelSelection).mockRejectedValueOnce(
+      new Error("Channel is required when multiple channels are configured: telegram, feishu"),
+    );
+
+    const cfg = makeCfg({
+      bindings: [
+        { agentId: AGENT_ID, match: { channel: "telegram", accountId: "bot-tg" } },
+        { agentId: AGENT_ID, match: { channel: "feishu", accountId: "bot-feishu" } },
+      ],
+    });
+
+    const result = await resolveDeliveryTarget(cfg, AGENT_ID, {
+      channel: "last",
+      to: undefined,
+    });
+
+    // With multiple bindings, falls through to resolveMessageChannelSelection which throws.
+    expect(resolveMessageChannelSelection).toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("expected channel resolution error");
+    }
+    expect(result.error.message).toContain("Channel is required");
+  });
+
+  it("binding channel takes precedence over resolveMessageChannelSelection for single binding", async () => {
+    setMainSessionEntry(undefined);
+    vi.mocked(resolveMessageChannelSelection).mockClear();
+    // Even if resolveMessageChannelSelection would throw (multiple channels globally),
+    // the single binding for this agent resolves the channel without calling it.
+    vi.mocked(resolveMessageChannelSelection).mockRejectedValue(
+      new Error(
+        "Channel is required when multiple channels are configured: telegram, feishu, wecom",
+      ),
+    );
+
+    const cfg = makeCfg({
+      bindings: [{ agentId: AGENT_ID, match: { channel: "feishu", accountId: "feishu-app" } }],
+    });
+
+    const result = await resolveDeliveryTarget(cfg, AGENT_ID, {
+      channel: "last",
+      to: "feishu-chat-456",
+    });
+
+    expect(resolveMessageChannelSelection).not.toHaveBeenCalled();
+    expect(result.channel).toBe("feishu");
+    expect(result.accountId).toBe("feishu-app");
+  });
 });
